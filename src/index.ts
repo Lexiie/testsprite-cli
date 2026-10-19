@@ -209,31 +209,83 @@ function applyExitOverrideDeep(cmd: Command): void {
 }
 applyExitOverrideDeep(program);
 
-function isRegisteredRootCommand(name: string): boolean {
-  return (
-    name === 'help' ||
-    program.commands.some(command => command.name() === name || command.aliases().includes(name))
+const VALUE_TAKING_GLOBAL_OPTIONS = new Set([
+  '--output',
+  '--profile',
+  '--endpoint-url',
+  '--request-timeout',
+]);
+
+function findRegisteredSubcommand(parent: Command, name: string): Command | undefined {
+  return parent.commands.find(
+    command => command.name() === name || command.aliases().includes(name),
   );
 }
 
 /**
- * Commander checks its implicit help option before reporting an unknown root
- * command. It also falls back to root help when `help <command>` names a
- * missing command. Detect both cases while help is being rendered so the
- * normal unknown-command error wins before any misleading help is written.
+ * Commander checks its implicit help option before reporting an unknown command.
+ * It also falls back to a parent's help when `help <command>` names a missing
+ * command, and when an unknown token is followed by `--help`/`-h`. Detect all
+ * of these cases while help is being rendered so the normal unknown-command
+ * error (exit 5) wins before any misleading help (exit 0) is written.
+ *
+ * The walk skips the value of global options that take an argument (e.g.
+ * `--output json`) so such a value is never mistaken for a subcommand.
  */
-function unknownRootCommandMaskedByHelp(args: readonly string[]): string | undefined {
-  const [first, second] = args;
-  if (first === 'help') {
-    return second && !isRegisteredRootCommand(second) ? second : undefined;
+function unknownCommandMaskedByHelp(args: readonly string[]): string | undefined {
+  let current: Command = program;
+  let sawHelp = false;
+  let expectingHelpTarget = false;
+  let helpTargetParent: Command = program;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i]!;
+
+    if (token === '--help' || token === '-h') continue;
+
+    if (token.startsWith('-')) {
+      if (token.includes('=')) continue;
+      if (VALUE_TAKING_GLOBAL_OPTIONS.has(token)) i += 1;
+      continue;
+    }
+
+    if (token === 'help') {
+      const helpCommand = findRegisteredSubcommand(current, 'help');
+      helpTargetParent = current;
+      if (helpCommand) current = helpCommand;
+      sawHelp = true;
+      expectingHelpTarget = true;
+      continue;
+    }
+
+    if (expectingHelpTarget) {
+      if (!findRegisteredSubcommand(helpTargetParent, token)) return token;
+      const resolved = findRegisteredSubcommand(helpTargetParent, token);
+      if (resolved) current = resolved;
+      expectingHelpTarget = false;
+      continue;
+    }
+
+    const resolved = findRegisteredSubcommand(current, token);
+    if (resolved) {
+      current = resolved;
+      continue;
+    }
+
+    // Unknown token. Report it when help is involved in the invocation, since
+    // that is exactly when Commander would otherwise mask the error.
+    const laterHelp = args
+      .slice(i + 1)
+      .some(arg => arg === '--help' || arg === '-h' || arg === 'help');
+    if (sawHelp || laterHelp) return token;
+    return undefined;
   }
-  if (!first || first.startsWith('-') || isRegisteredRootCommand(first)) return undefined;
-  return args.slice(1).some(arg => arg === '--help' || arg === '-h') ? first : undefined;
+
+  return undefined;
 }
 
-program.addHelpText('beforeAll', context => {
-  if (context.command !== program) return '';
-  const unknownCommand = unknownRootCommandMaskedByHelp(program.args);
+program.addHelpText('beforeAll', () => {
+  const unknownCommand = unknownCommandMaskedByHelp(program.args);
   if (unknownCommand) {
     program.error(`error: unknown command '${unknownCommand}'`, {
       code: 'commander.unknownCommand',
