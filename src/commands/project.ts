@@ -545,6 +545,13 @@ export async function runUpdate(
   // P1-2: validate idempotency key before sending as an HTTP header.
   assertIdempotencyKey(opts.idempotencyKey);
 
+  // Validate the positional <project-id> up front (parity with `project delete`),
+  // including under --dry-run, so an empty/whitespace id fails fast with a
+  // typed VALIDATION_ERROR instead of printing a canned success.
+  if (opts.projectId === undefined || opts.projectId.trim().length === 0) {
+    throw localValidationError('<project-id> is required and must not be empty or whitespace-only');
+  }
+
   // P1-3: client-side length checks matching server limits.
   // Reject a whitespace-only `--name` on update too (parity with create); name
   // stays optional here, so only validate when the flag is supplied.
@@ -784,6 +791,10 @@ export async function runCredential(
   const stderr = deps.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
   assertIdempotencyKey(opts.idempotencyKey);
 
+  if (opts.projectId === undefined || opts.projectId.trim().length === 0) {
+    throw localValidationError('<project-id> is required and must not be empty or whitespace-only');
+  }
+
   if (!(CLI_AUTH_TYPES as readonly string[]).includes(opts.authType)) {
     throw localValidationError(`--type must be one of: ${CLI_AUTH_TYPES.join(', ')}`);
   }
@@ -890,6 +901,10 @@ export async function runAutoAuth(
   const out = makeOutput(opts.output, deps);
   const stderr = deps.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
   assertIdempotencyKey(opts.idempotencyKey);
+
+  if (opts.projectId === undefined || opts.projectId.trim().length === 0) {
+    throw localValidationError('<project-id> is required and must not be empty or whitespace-only');
+  }
 
   if (!(AUTO_AUTH_METHODS as readonly string[]).includes(opts.method)) {
     throw localValidationError(`--method must be one of: ${AUTO_AUTH_METHODS.join(', ')}`);

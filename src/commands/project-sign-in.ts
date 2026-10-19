@@ -264,6 +264,10 @@ export async function runSignInGet(
   opts: GetOptions,
   deps: ProjectDeps = {},
 ): Promise<CliProjectSignInResponse> {
+  if (opts.projectId === undefined || opts.projectId.trim().length === 0)
+    throw signInValidationError(
+      '<project-id> is required and must not be empty or whitespace-only.',
+    );
   if (opts.env !== undefined && !opts.env.trim())
     throw signInValidationError('--env must not be empty or whitespace-only.');
   const out = new Output(opts.output, { stdout: deps.stdout, stderr: deps.stderr });
@@ -285,6 +289,10 @@ export async function runSignInSet(
   opts: SetOptions,
   deps: ProjectDeps = {},
 ): Promise<CliProjectSignInSetResponse> {
+  if (opts.projectId === undefined || opts.projectId.trim().length === 0)
+    throw signInValidationError(
+      '<project-id> is required and must not be empty or whitespace-only.',
+    );
   if (opts.env !== undefined && !opts.env.trim())
     throw signInValidationError('--env must not be empty or whitespace-only.');
   const mode = parseSignInMode(opts.mode, '--mode');
