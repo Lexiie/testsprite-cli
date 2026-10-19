@@ -197,6 +197,7 @@ let telemetryLocalProject = false;
 // command tree is assembled so every leaf subcommand behaves consistently.
 function applyExitOverrideDeep(cmd: Command): void {
   cmd.exitOverride();
+  cmd.showSuggestionAfterError();
   cmd.configureOutput({
     outputError(str, _write) {
       const rephrased = rephraseUnknownOption(str);
