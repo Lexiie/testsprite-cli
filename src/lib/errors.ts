@@ -256,12 +256,12 @@ export class ApiError extends CLIError {
     apiUrl?: string,
     serverNextAction?: string,
   ) {
-    super(envelope.message, exitCodeFor(envelope.code));
+    super(redactDeep(envelope.message) as string, exitCodeFor(envelope.code));
     this.name = 'ApiError';
     this.code = envelope.code;
     this.requestId = envelope.requestId;
-    this.nextAction = envelope.nextAction;
-    this.serverNextAction = serverNextAction ?? envelope.nextAction;
+    this.nextAction = redactDeep(envelope.nextAction) as string;
+    this.serverNextAction = redactDeep(serverNextAction ?? envelope.nextAction) as string;
     // Redact at the single point every ApiError is constructed — server
     // envelopes (fromEnvelope), locally-fabricated ones (authRequired,
     // localValidationError), and any future direct `new ApiError(...)` — so

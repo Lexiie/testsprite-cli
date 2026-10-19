@@ -139,7 +139,13 @@ export function redactDeep<T>(value: T): T {
         result[key] = v;
         continue;
       }
-      result[key] = isSecretKey(key) && typeof v === 'string' ? REDACTED : redactDeep(v);
+      if (isSecretKey(key) && typeof v === 'string') {
+        result[key] = REDACTED;
+      } else if (isSecretKey(key) && Array.isArray(v)) {
+        result[key] = v.map(item => (typeof item === 'string' ? REDACTED : redactDeep(item)));
+      } else {
+        result[key] = redactDeep(v);
+      }
     }
     return result as unknown as T;
   }
