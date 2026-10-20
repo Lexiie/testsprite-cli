@@ -10549,7 +10549,12 @@ export async function runTestRunAll(
     });
     // Rate-deferred tests were NOT dispatched → signal incomplete (exit 7),
     // mirroring `test rerun --all`. The user retries with a fresh invocation.
-    if (deferred.length > 0) {
+    // Under --wait, defer the gate when at least one run was accepted so the
+    // accepted runs get polled first — a higher-priority auth/client error
+    // (issue #471) must be able to surface instead of being masked by the
+    // deferred (exit 7) throw. The gate still fires afterwards for a
+    // deferred-only batch.
+    if (deferred.length > 0 && !(opts.wait && accepted.length > 0)) {
       throw new CLIError(
         `Batch run incomplete: ${deferred.length} test${deferred.length !== 1 ? 's' : ''} rate-deferred (per-key run budget). Retry these individually after ~60s: ${deferred.map(d => d.testId).join(' ')}`,
         7,
@@ -11307,8 +11312,14 @@ export async function runTestRunAll(
 
   // Rate-deferred tests were never dispatched → the batch is incomplete (exit 7),
   // mirroring `test rerun --all`. Checked before the failed-run throw so the
-  // operator learns to retry the deferred set.
-  if (deferred.length > 0) {
+  // operator learns to retry the deferred set — EXCEPT when an accepted run
+  // already failed with a higher-priority auth/client error, which must win
+  // (issue #471): a bad credential is actionable before a retry-the-deferred
+  // hint, and the deferred gate must not mask it.
+  const hasAuthFailure = freshRunResults.some(
+    r => r.status === 'error' && r.error !== undefined && isAuthCode(r.error.code),
+  );
+  if (deferred.length > 0 && !hasAuthFailure) {
     throw new CLIError(
       `Batch run incomplete: ${deferred.length} test${deferred.length !== 1 ? 's' : ''} rate-deferred (per-key run budget) — retry these individually after ~60s: ${deferred.map(d => d.testId).join(' ')}`,
       7,
@@ -11321,6 +11332,15 @@ export async function runTestRunAll(
   // behaviour: a NOT_FOUND/RATE_LIMITED/… poll now propagates its real code.
   const failure = resolveWaitFailure(freshRunResults, { timeoutSeconds: opts.timeoutSeconds });
   if (failure) throw failure;
+
+  // If no higher-priority error surfaced but the batch is still incomplete
+  // because of rate-deferred tests, keep the deferred (exit 7) behaviour.
+  if (deferred.length > 0) {
+    throw new CLIError(
+      `Batch run incomplete: ${deferred.length} test${deferred.length !== 1 ? 's' : ''} rate-deferred (per-key run budget) — retry these individually after ~60s: ${deferred.map(d => d.testId).join(' ')}`,
+      7,
+    );
+  }
 
   // Nothing of ours dispatched (the poll set was auto-resumed in-flight runs
   // only) and every remaining conflict is a credits refusal → exit 12, the same
