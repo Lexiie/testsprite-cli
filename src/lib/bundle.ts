@@ -42,6 +42,8 @@ import { createWriteStream } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { CliFailureContext, CliTestStep } from '../commands/test.js';
 import { ApiError, InterruptError, TransportError, localValidationError } from './errors.js';
+import { disallowedIpReason } from './target-url.js';
+import * as net from 'node:net';
 import { globalShutdown, type ShutdownHandle } from './interrupt.js';
 import { defaultSleep, sleepUnlessInterrupted } from './poll-support.js';
 import { requireEnum } from './validate.js';
@@ -860,6 +862,35 @@ function sidecarExtension(kind: 'log' | 'network' | 'console' | 'screenshot' | '
  * retried up to STREAM_URL_MAX_RETRIES times with a fixed delay.
  * Presigned URLs are valid for 15 minutes, so retries are safe.
  */
+
+/**
+ * SSRF guard for presigned artifact/code downloads: require https and reject
+ * loopback, link-local, RFC1918, and the IPv6 forms `disallowedIpReason`
+ * already classifies. Runs before any fetch so a disallowed URL never leaves
+ * the machine.
+ */
+function assertSafeDownloadUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw localValidationError('url', 'must be a valid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw localValidationError('url', 'must use the https scheme');
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost') {
+    throw localValidationError('url', 'localhost is not allowed');
+  }
+  if (net.isIP(host) !== 0) {
+    const reason = disallowedIpReason(host);
+    if (reason !== undefined) {
+      throw localValidationError('url', reason.reason);
+    }
+  }
+}
+
 export async function streamUrlToFile(
   url: string,
   filePath: string,
@@ -884,6 +915,7 @@ async function streamUrlToFileTracked(
   sleepFn: (ms: number) => Promise<void>,
   shutdownSignal: AbortSignal,
 ): Promise<void> {
+  assertSafeDownloadUrl(url);
   const artifactUrl = redactArtifactUrlForDetails(url);
   for (let attempt = 1; attempt <= STREAM_URL_MAX_RETRIES; attempt++) {
     if (shutdownSignal.aborted) throw shutdownSignal.reason;

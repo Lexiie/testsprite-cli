@@ -31,6 +31,7 @@ import { rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
+import * as net from 'node:net';
 import { openInBrowser } from '../lib/browser.js';
 import {
   emitDryRunBanner,
@@ -149,7 +150,7 @@ import {
 } from '../lib/conflict-reason.js';
 import { isProxyAgentActive } from '../lib/proxy.js';
 import type { CliProjectEnvironment, CliProjectEnvListResponse } from './project-env.js';
-import { assertNotLocal } from '../lib/target-url.js';
+import { assertNotLocal, disallowedIpReason } from '../lib/target-url.js';
 import { assertTargetUrlReachable } from '../lib/target-url-preflight.js';
 import {
   assertLocalPortListening,
@@ -16612,17 +16613,40 @@ async function streamPresignedBody(url: string, out: Output, deps: TestDeps): Pr
   return shutdown.runCriticalOperation(() => readPresignedBody(url, out, deps, shutdown.signal));
 }
 
+function assertSafeDownloadUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw localValidationError('url', 'must be a valid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw localValidationError('url', 'must use the https scheme');
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost') {
+    throw localValidationError('url', 'localhost is not allowed');
+  }
+  if (net.isIP(host) !== 0) {
+    const reason = disallowedIpReason(host);
+    if (reason !== undefined) {
+      throw localValidationError('url', reason.reason);
+    }
+  }
+}
+
 async function readPresignedBody(
   url: string,
   out: Output,
   deps: TestDeps,
   shutdownSignal: AbortSignal,
 ): Promise<void> {
+  assertSafeDownloadUrl(url);
   if (shutdownSignal.aborted) throw shutdownSignal.reason;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
   let response: Response;
   try {
-    response = await fetchImpl(url, { signal: shutdownSignal });
+    response = await fetchImpl(url, { redirect: 'error', signal: shutdownSignal });
   } catch (err) {
     if (shutdownSignal.aborted) throw shutdownSignal.reason;
     if (err instanceof InterruptError) throw err;
