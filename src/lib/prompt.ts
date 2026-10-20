@@ -50,6 +50,7 @@ function readLine(
     let buffer = '';
     let resolved = false;
     let listening = false;
+    let escapeState: 'none' | 'esc' | 'csi' | 'ss3' = 'none';
 
     const onData = (chunk: Buffer | string): void => {
       const str = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
@@ -59,7 +60,10 @@ function readLine(
     const processText = (str: string): void => {
       for (let i = 0; i < str.length; i += 1) {
         const code = str.charCodeAt(i);
-        // Enter (CR or LF)
+
+        // Enter (CR or LF) and Ctrl-C take priority over any in-progress
+        // escape sequence, so a stray unterminated sequence can't swallow
+        // the submit key.
         if (code === 13 || code === 10) {
           let nextIndex = i + 1;
           if (code === 13 && str.charCodeAt(nextIndex) === 10) {
@@ -69,7 +73,6 @@ function readLine(
           finish();
           return;
         }
-        // Ctrl-C
         if (code === 3) {
           savePendingInput('');
           cleanup();
@@ -79,6 +82,36 @@ function readLine(
             reject(new Error('Prompt cancelled.'));
           }
           return;
+        }
+
+        // Drop whole terminal escape sequences (CSI/SS3 and two-byte
+        // Alt+key) instead of only their ESC byte, so cursor/editing and
+        // bracketed-paste markers never leak into the answer. Enter and
+        // Ctrl-C are handled below with priority, but only when not inside
+        // an escape sequence.
+        if (escapeState === 'esc') {
+          if (code === 0x5b) {
+            escapeState = 'csi';
+            continue;
+          }
+          if (code === 0x4f) {
+            escapeState = 'ss3';
+            continue;
+          }
+          // Two-byte ESC x (Alt+key): drop this byte and reset.
+          escapeState = 'none';
+          continue;
+        }
+        if (escapeState === 'csi' || escapeState === 'ss3') {
+          // Final byte of the sequence (0x40-0x7E) ends it; drop it too.
+          if (code >= 0x40 && code <= 0x7e) {
+            escapeState = 'none';
+          }
+          continue;
+        }
+        if (code === 0x1b) {
+          escapeState = 'esc';
+          continue;
         }
         // Backspace / DEL
         if (code === 127 || code === 8) {
