@@ -60,6 +60,13 @@ describe('renderCompletion', () => {
     expect(script).toContain('__fish_seen_subcommand_from auth');
     expect(script).toContain('-l output');
   });
+
+  it('powershell script registers an argument completer and lists commands', () => {
+    const script = renderCompletion('powershell', SPEC);
+    expect(script).toContain('Register-ArgumentCompleter');
+    expect(script).toContain('setup');
+    expect(script).toContain('--output');
+  });
 });
 
 describe('createCompletionCommand', () => {
